@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>Curry Crunch AR</title>
+<style>
+  :root { --brand:#e4002b; --ink:#1a1a1a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; overflow:hidden; background:#000;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+
+  /* Live camera feed */
+  #camera { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; z-index:1; }
+
+  /* The floating, interactive product */
+  #stage { position:fixed; inset:0; z-index:2; touch-action:none; }
+  #product {
+    position:absolute; left:50%; top:50%; width:60vw; max-width:420px;
+    transform:translate(-50%,-50%); transform-origin:center center;
+    will-change:transform; user-select:none; -webkit-user-drag:none; pointer-events:auto;
+    filter:drop-shadow(0 18px 30px rgba(0,0,0,.45));
+    animation:float 3.2s ease-in-out infinite;
+  }
+  @keyframes float { 0%,100%{ margin-top:0 } 50%{ margin-top:-14px } }
+
+  /* UI */
+  .top { position:fixed; top:0; left:0; right:0; z-index:5; display:flex; justify-content:center;
+    padding:calc(env(safe-area-inset-top) + 12px) 12px 12px; pointer-events:none; }
+  .badge { background:var(--brand); color:#fff; font-weight:800; letter-spacing:.5px;
+    padding:8px 16px; border-radius:999px; font-size:14px; box-shadow:0 6px 16px rgba(0,0,0,.35); }
+
+  .hint { position:fixed; left:50%; top:calc(env(safe-area-inset-top) + 60px); transform:translateX(-50%);
+    z-index:5; background:rgba(0,0,0,.55); color:#fff; padding:8px 14px; border-radius:12px;
+    font-size:13px; text-align:center; max-width:86vw; transition:opacity .5s; pointer-events:none; }
+
+  .controls { position:fixed; left:0; right:0; bottom:0; z-index:5;
+    display:flex; gap:12px; justify-content:center; align-items:center;
+    padding:14px 14px calc(env(safe-area-inset-bottom) + 18px); pointer-events:none; }
+  .btn { pointer-events:auto; border:none; border-radius:16px; padding:14px 18px; font-size:15px;
+    font-weight:700; color:#fff; background:rgba(0,0,0,.55); backdrop-filter:blur(6px);
+    box-shadow:0 6px 16px rgba(0,0,0,.35); display:flex; align-items:center; gap:8px; }
+  .btn.primary { background:var(--brand); }
+  .btn:active { transform:scale(.96); }
+
+  /* Start / permission screen */
+  #start { position:fixed; inset:0; z-index:20; background:radial-gradient(120% 120% at 50% 0%, #2a0006, #000);
+    color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:28px; }
+  #start h1 { font-size:26px; margin:6px 0 4px; }
+  #start p { opacity:.85; max-width:340px; line-height:1.5; }
+  #startBtn { margin-top:22px; background:var(--brand); color:#fff; border:none; font-weight:800;
+    font-size:18px; padding:16px 30px; border-radius:16px; box-shadow:0 10px 24px rgba(228,0,43,.4); }
+  #err { position:fixed; inset:0; z-index:30; background:#111; color:#fff; display:none;
+    flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:28px; }
+  .spin { width:44px; height:44px; border:4px solid rgba(255,255,255,.25); border-top-color:#fff;
+    border-radius:50%; animation:rot 1s linear infinite; margin-bottom:16px; }
+  @keyframes rot { to { transform:rotate(360deg) } }
+  #flash { position:fixed; inset:0; z-index:40; background:#fff; opacity:0; pointer-events:none; }
+</style>
+</head>
+<body>
+
+  <!-- Camera background -->
+  <video id="camera" autoplay playsinline muted></video>
+
+  <!-- Interactive floating product -->
+  <div id="stage">
+    <img id="product" src="curry-crunch.png" alt="Curry Crunch" draggable="false" />
+  </div>
+
+  <!-- UI overlays -->
+  <div class="top"><div class="badge">CURRY CRUNCH • AR</div></div>
+  <div class="hint" id="hint">Drag to move • pinch to resize • twist to rotate</div>
+
+  <div class="controls">
+    <button class="btn" id="resetBtn">↺ Reset</button>
+    <button class="btn primary" id="snapBtn">📸 Take Photo</button>
+  </div>
+
+  <!-- Start screen -->
+  <div id="start">
+    <div class="badge">CURRY CRUNCH • AR</div>
+    <h1>See it float in front of you</h1>
+    <p>Point your camera around, then drag, resize and spin the Curry Crunch. Tap the button to allow camera access.</p>
+    <button id="startBtn">Start AR Experience</button>
+  </div>
+
+  <!-- Error screen -->
+  <div id="err">
+    <div class="spin" style="display:none"></div>
+    <h2 id="errTitle">Camera unavailable</h2>
+    <p id="errMsg" style="max-width:340px;line-height:1.5"></p>
+  </div>
+
+  <div id="flash"></div>
+
+<script>
+(function () {
+  const video   = document.getElementById('camera');
+  const product = document.getElementById('product');
+  const stage   = document.getElementById('stage');
+  const startEl = document.getElementById('start');
+  const errEl   = document.getElementById('err');
+  const hint    = document.getElementById('hint');
+
+  // Transform state for the product
+  const state = { x:0, y:0, scale:1, rot:0 };
+  function apply(){
+    product.style.transform =
+      `translate(-50%,-50%) translate(${state.x}px, ${state.y}px) scale(${state.scale}) rotate(${state.rot}deg)`;
+  }
+  function reset(){ state.x=0; state.y=0; state.scale=1; state.rot=0; apply(); }
+  apply();
+
+  // ---- Camera ----
+  async function startCamera(){
+    startEl.style.display='none';
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } }, audio:false
+      });
+      video.srcObject = stream;
+      window._stream = stream;
+      setTimeout(()=> hint.style.opacity='0', 6000);
+    } catch (e) {
+      showError(e);
+    }
+  }
+  function showError(e){
+    errEl.style.display='flex';
+    const t=document.getElementById('errTitle'), m=document.getElementById('errMsg');
+    if (e && (e.name==='NotAllowedError' || e.name==='SecurityError')) {
+      t.textContent='Camera permission needed';
+      m.textContent='Please allow camera access, then reload the page. On iPhone use Safari; on Android use Chrome.';
+    } else if (e && e.name==='NotFoundError') {
+      t.textContent='No camera found';
+      m.textContent='This device has no available camera.';
+    } else {
+      t.textContent='Could not start camera';
+      m.textContent='Make sure the page is opened over HTTPS and no other app is using the camera. ('+(e&&e.name||'error')+')';
+    }
+  }
+  document.getElementById('startBtn').addEventListener('click', startCamera);
+  document.getElementById('resetBtn').addEventListener('click', reset);
+
+  // ---- Gestures (drag, pinch-zoom, twist) ----
+  const pts = new Map();
+  let gesture = null;
+  function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+  function ang(a,b){ return Math.atan2(b.y-a.y, b.x-a.x)*180/Math.PI; }
+
+  stage.addEventListener('pointerdown', e=>{
+    stage.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if (pts.size===1){
+      gesture = { mode:'drag', sx:e.clientX, sy:e.clientY, ox:state.x, oy:state.y };
+    } else if (pts.size===2){
+      const [a,b] = [...pts.values()];
+      gesture = { mode:'pinch', d0:dist(a,b), a0:ang(a,b), s0:state.scale, r0:state.rot };
+    }
+  });
+  stage.addEventListener('pointermove', e=>{
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if (!gesture) return;
+    if (gesture.mode==='drag' && pts.size===1){
+      state.x = gesture.ox + (e.clientX-gesture.sx);
+      state.y = gesture.oy + (e.clientY-gesture.sy);
+      apply();
+    } else if (pts.size===2){
+      const [a,b] = [...pts.values()];
+      if (gesture.mode!=='pinch'){
+        gesture = { mode:'pinch', d0:dist(a,b), a0:ang(a,b), s0:state.scale, r0:state.rot };
+      }
+      state.scale = Math.min(4, Math.max(0.25, gesture.s0 * (dist(a,b)/gesture.d0)));
+      state.rot   = gesture.r0 + (ang(a,b)-gesture.a0);
+      apply();
+    }
+  });
+  function endPointer(e){
+    pts.delete(e.pointerId);
+    if (pts.size===1){
+      const [p]=[...pts.entries()];
+      gesture = { mode:'drag', sx:p[1].x, sy:p[1].y, ox:state.x, oy:state.y };
+    } else if (pts.size===0){ gesture=null; }
+  }
+  stage.addEventListener('pointerup', endPointer);
+  stage.addEventListener('pointercancel', endPointer);
+
+  // ---- Photo capture (camera + product composited) ----
+  document.getElementById('snapBtn').addEventListener('click', capture);
+  function capture(){
+    if (!video.videoWidth) return;
+    const W = video.videoWidth, H = video.videoHeight;
+    const c = document.createElement('canvas'); c.width=W; c.height=H;
+    const ctx = c.getContext('2d');
+
+    // draw camera (object-fit:cover math)
+    const vr = W/H, sr = window.innerWidth/window.innerHeight;
+    ctx.drawImage(video, 0, 0, W, H);
+
+    // draw product at its on-screen position, scaled into the video space
+    const kx = W/window.innerWidth, ky = H/window.innerHeight;
+    const rect = product.getBoundingClientRect();
+    const cx = (rect.left+rect.width/2)*kx;
+    const cy = (rect.top+rect.height/2)*ky;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(state.rot*Math.PI/180);
+    const pw = rect.width*kx, ph = rect.height*ky;
+    // undo the rotation baked into getBoundingClientRect by using natural ratio
+    const natRatio = product.naturalWidth/product.naturalHeight || 1;
+    let dw = product.width * state.scale * kx;
+    let dh = dw/natRatio;
+    ctx.drawImage(product, -dw/2, -dh/2, dw, dh);
+    ctx.restore();
+
+    // flash + download
+    const f=document.getElementById('flash');
+    f.style.transition='none'; f.style.opacity='.9';
+    requestAnimationFrame(()=>{ f.style.transition='opacity .5s'; f.style.opacity='0'; });
+
+    c.toBlob(blob=>{
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url; a.download='curry-crunch-ar.png';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    }, 'image/png');
+  }
+
+  // Auto-hide hint on first interaction
+  stage.addEventListener('pointerdown', ()=>{ hint.style.opacity='0'; }, {once:true});
+})();
+</script>
+</body>
+</html>
