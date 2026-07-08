@@ -1,1 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>Curry Crunch AR</title>
+<script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+<style>
+  :root { --brand:#e4002b; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; overflow:hidden; background:#000;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
 
+  #camera { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; z-index:1; background:#000; }
+
+  model-viewer {
+    position:fixed; inset:0; width:100%; height:100%; z-index:2;
+    background-color:transparent; --poster-color:transparent;
+  }
+
+  .top { position:fixed; top:0; left:0; right:0; z-index:5; display:flex; justify-content:center;
+    padding:calc(env(safe-area-inset-top) + 12px) 12px 12px; pointer-events:none; }
+  .badge { background:var(--brand); color:#fff; font-weight:800; letter-spacing:.5px;
+    padding:8px 16px; border-radius:999px; font-size:14px; box-shadow:0 6px 16px rgba(0,0,0,.35); }
+
+  .hint { position:fixed; left:50%; top:calc(env(safe-area-inset-top) + 58px); transform:translateX(-50%);
+    z-index:5; background:rgba(0,0,0,.55); color:#fff; padding:8px 14px; border-radius:12px;
+    font-size:13px; text-align:center; max-width:88vw; transition:opacity .5s; pointer-events:none; }
+
+  .controls { position:fixed; left:0; right:0; bottom:0; z-index:5;
+    display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap;
+    padding:14px 12px calc(env(safe-area-inset-bottom) + 16px); pointer-events:none; }
+  .btn { pointer-events:auto; border:none; border-radius:14px; padding:13px 18px; font-size:15px;
+    font-weight:700; color:#fff; background:rgba(0,0,0,.55); backdrop-filter:blur(6px);
+    box-shadow:0 6px 16px rgba(0,0,0,.35); display:flex; align-items:center; gap:6px; }
+  .btn.primary { background:var(--brand); }
+  .btn.on { background:#0a8f3c; }
+  .btn:active { transform:scale(.95); }
+  .icon { font-size:20px; line-height:1; }
+
+  /* Small fallback prompt only shown if the browser blocks auto-start */
+  #tap { position:fixed; inset:0; z-index:20; display:none; flex-direction:column; align-items:center; justify-content:center;
+    background:rgba(0,0,0,.6); color:#fff; text-align:center; padding:28px; }
+  #tapBtn { margin-top:16px; background:var(--brand); color:#fff; border:none; font-weight:800;
+    font-size:17px; padding:14px 26px; border-radius:14px; }
+
+  .loader { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:3;
+    display:flex; flex-direction:column; align-items:center; color:#fff; gap:12px; text-shadow:0 2px 6px rgba(0,0,0,.6); }
+  .spin { width:44px; height:44px; border:4px solid rgba(255,255,255,.35); border-top-color:#fff;
+    border-radius:50%; animation:rot 1s linear infinite; }
+  @keyframes rot { to { transform:rotate(360deg) } }
+  #flash { position:fixed; inset:0; z-index:40; background:#fff; opacity:0; pointer-events:none; }
+</style>
+</head>
+<body>
+
+  <video id="camera" autoplay playsinline muted webkit-playsinline></video>
+
+  <model-viewer
+      id="mv"
+      src="https://d3u0tzju9qaucj.cloudfront.net/7d051b5a-7bfe-49fe-a484-24e7b3a9458a/680693cc-0aba-488e-bf60-ab8f8f720782.glb"
+      alt="KFC Curry Crunch bucket"
+      camera-controls
+      touch-action="none"
+      auto-rotate
+      auto-rotate-delay="0"
+      rotation-per-second="26deg"
+      interaction-prompt="none"
+      shadow-intensity="0.9"
+      exposure="1.05"
+      environment-image="neutral"
+      camera-orbit="0deg 78deg 105%"
+      min-camera-orbit="auto 0deg auto"
+      max-camera-orbit="auto 180deg auto"
+      disable-tap>
+    <div slot="poster"></div>
+  </model-viewer>
+
+  <div class="loader" id="loader"><div class="spin"></div><div>Loading the Curry Crunch…</div></div>
+
+  <div class="top"><div class="badge">CURRY CRUNCH • AR</div></div>
+  <div class="hint" id="hint">Drag to spin the bucket 360° • pinch to zoom • tap 📸 for a photo</div>
+
+  <div class="controls">
+    <button class="btn on" id="spinBtn"><span class="icon">🔄</span>Auto-spin</button>
+    <button class="btn primary" id="snapBtn"><span class="icon">📸</span>Take Photo</button>
+  </div>
+
+  <div id="tap">
+    <div>Tap to turn on your camera</div>
+    <button id="tapBtn">Enable camera</button>
+  </div>
+
+  <div id="flash"></div>
+
+<script>
+  const mv     = document.getElementById('mv');
+  const video  = document.getElementById('camera');
+  const hint   = document.getElementById('hint');
+  const loader = document.getElementById('loader');
+  const tap    = document.getElementById('tap');
+
+  mv.addEventListener('load', ()=> loader.style.display='none');
+  mv.addEventListener('pointerdown', ()=>{ hint.style.opacity='0'; }, {once:true});
+
+  // Auto-spin toggle (spinning by default)
+  const spinBtn = document.getElementById('spinBtn');
+  spinBtn.addEventListener('click', ()=>{
+    if (mv.hasAttribute('auto-rotate')) { mv.removeAttribute('auto-rotate'); spinBtn.classList.remove('on'); }
+    else { mv.setAttribute('auto-rotate',''); spinBtn.classList.add('on'); }
+  });
+
+  // ---- Turn the camera on automatically ----
+  async function startCamera(){
+    let stream=null;
+    try { stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } }, audio:false }); }
+    catch(e1){
+      try { stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false }); }
+      catch(e2){ tap.style.display='flex'; return false; }   // needs a tap → show fallback
+    }
+    video.srcObject = stream;
+    try { await video.play(); } catch(_){}
+    tap.style.display='none';
+    setTimeout(()=> hint.style.opacity='0', 8000);
+    return true;
+  }
+  // try immediately on load; if blocked, the fallback button appears
+  window.addEventListener('load', startCamera);
+  document.getElementById('tapBtn').addEventListener('click', startCamera);
+
+  // ---- Take Photo: live camera + 3D bucket, composited ----
+  document.getElementById('snapBtn').addEventListener('click', ()=>{
+    if(!video.videoWidth){ startCamera(); return; }
+    const W = video.videoWidth, H = video.videoHeight;
+    const c = document.createElement('canvas'); c.width=W; c.height=H;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(video, 0, 0, W, H);
+    let dataUrl; try { dataUrl = mv.toDataURL('image/png'); } catch(_) { dataUrl=null; }
+    const save = ()=>{ flash(); c.toBlob(b=>{ const u=URL.createObjectURL(b); const a=document.createElement('a');
+      a.href=u; a.download='curry-crunch-ar.png'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(u),4000); }, 'image/png'); };
+    if (dataUrl){
+      const layer=new Image();
+      layer.onload=()=>{ const s=Math.max(W/layer.width,H/layer.height); const dw=layer.width*s, dh=layer.height*s;
+        ctx.drawImage(layer,(W-dw)/2,(H-dh)/2,dw,dh); save(); };
+      layer.onerror=save; layer.src=dataUrl;
+    } else save();
+  });
+
+  function flash(){ const f=document.getElementById('flash'); f.style.transition='none'; f.style.opacity='.9';
+    requestAnimationFrame(()=>{ f.style.transition='opacity .5s'; f.style.opacity='0'; }); }
+</script>
+</body>
+</html>
